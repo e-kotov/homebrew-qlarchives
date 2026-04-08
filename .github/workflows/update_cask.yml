@@ -1,12 +1,12 @@
-name: Auto-update Cask
+name: Auto-update Casks
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Every 6 hours
-  workflow_dispatch: # Allow manual trigger
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
-  update-cask:
+  update-casks:
     runs-on: macos-latest
     permissions:
       contents: write
@@ -14,60 +14,51 @@ jobs:
       - name: Checkout Tap
         uses: actions/checkout@v4
 
-      - name: Check for new version
-        id: check
+      - name: Update all Casks
         run: |
-          # Use GITHUB_TOKEN to avoid rate limits
-          LATEST_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/relikd/QLArchives/releases/latest)
+          for cask_file in Casks/*.rb; do
+            echo "--------------------------------"
+            echo "Processing $cask_file..."
+            
+            # Extract the GitHub repo from a comment in the cask file
+            # Requirement: Add a comment like: # github_repo: "user/repo"
+            REPO=$(grep -E '# github_repo: ".*"' "$cask_file" | sed -E 's/.*"([^"]+)".*/\1/')
+            
+            if [ -z "$REPO" ]; then
+              echo "No '# github_repo: \"user/repo\"' comment found in $cask_file, skipping."
+              continue
+            fi
+            
+            echo "Monitoring GitHub repo: $REPO"
+            
+            LATEST_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/$REPO/releases/latest")
+            LATEST_VERSION=$(echo "$LATEST_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
+            DOWNLOAD_URL=$(echo "$LATEST_JSON" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
+            CURRENT_VERSION=$(grep -E 'version "[0-9.]+"' "$cask_file" | sed -E 's/.*"([0-9.]+)"/\1/')
+            
+            echo "Latest version: $LATEST_VERSION"
+            echo "Current version: $CURRENT_VERSION"
+            
+            if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ] && \
+               [ -n "$DOWNLOAD_URL" ] && [ "$DOWNLOAD_URL" != "null" ] && \
+               [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+              
+              echo "New version found! Downloading $DOWNLOAD_URL..."
+              curl -L -o release.zip "$DOWNLOAD_URL"
+              SHA256=$(shasum -a 256 release.zip | awk '{print $1}')
+              
+              echo "Updating version to $LATEST_VERSION and SHA256 to $SHA256"
+              sed -i '' "s/version \".*\"/version \"$LATEST_VERSION\"/" "$cask_file"
+              sed -i '' "s/sha256 \".*\"/sha256 \"$SHA256\"/" "$cask_file"
+              rm release.zip
+              
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git add "$cask_file"
+              git commit -m "Update $(basename $cask_file .rb) to v$LATEST_VERSION" || echo "No changes to commit for $cask_file"
+            else
+              echo "No update needed for $cask_file."
+            fi
+          done
           
-          # Extract version and download URL using jq
-          LATEST_VERSION=$(echo "$LATEST_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
-          DOWNLOAD_URL=$(echo "$LATEST_JSON" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
-          
-          # Get current version from the Cask file
-          CURRENT_VERSION=$(grep -E 'version "[0-9.]+"' Casks/qlarchives.rb | sed -E 's/.*"([0-9.]+)"/\1/')
-          
-          echo "Latest version found: '$LATEST_VERSION'"
-          echo "Download URL found: '$DOWNLOAD_URL'"
-          echo "Current version in Cask: '$CURRENT_VERSION'"
-          
-          # Only proceed if we have a valid version, a valid URL, and it's actually a new version
-          if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ] && \
-             [ -n "$DOWNLOAD_URL" ] && [ "$DOWNLOAD_URL" != "null" ] && \
-             [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "Update is available and valid."
-            echo "update_needed=true" >> $GITHUB_OUTPUT
-            echo "new_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-            echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
-          else
-            echo "No update needed or data missing from API."
-            echo "update_needed=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Update Cask
-        if: steps.check.outputs.update_needed == 'true'
-        run: |
-          VERSION=${{ steps.check.outputs.new_version }}
-          URL=${{ steps.check.outputs.download_url }}
-          
-          echo "Downloading $URL..."
-          curl -L -o release.zip "$URL"
-          SHA256=$(shasum -a 256 release.zip | awk '{print $1}')
-          
-          echo "New SHA256: $SHA256"
-          
-          # Update version and sha256 in the Ruby file
-          sed -i '' "s/version \".*\"/version \"$VERSION\"/" Casks/qlarchives.rb
-          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA256\"/" Casks/qlarchives.rb
-          
-          # Clean up
-          rm release.zip
-
-      - name: Commit and Push
-        if: steps.check.outputs.update_needed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Casks/qlarchives.rb
-          git commit -m "Update QLArchives to v${{ steps.check.outputs.new_version }}"
-          git push
+          git push || echo "No changes to push to remote"
