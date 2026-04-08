@@ -17,22 +17,30 @@ jobs:
       - name: Check for new version
         id: check
         run: |
-          LATEST_JSON=$(curl -s https://api.github.com/repos/relikd/QLArchives/releases/latest)
-          LATEST_VERSION=$(echo "$LATEST_JSON" | jq -r '.tag_name' | sed 's/^v//')
+          # Use GITHUB_TOKEN to avoid rate limits
+          LATEST_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/relikd/QLArchives/releases/latest)
+          
+          # Extract version and download URL using jq
+          LATEST_VERSION=$(echo "$LATEST_JSON" | jq -r '.tag_name // empty' | sed 's/^v//')
           DOWNLOAD_URL=$(echo "$LATEST_JSON" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
           
+          # Get current version from the Cask file
           CURRENT_VERSION=$(grep -E 'version "[0-9.]+"' Casks/qlarchives.rb | sed -E 's/.*"([0-9.]+)"/\1/')
           
-          echo "Latest version: $LATEST_VERSION"
-          echo "Current version: $CURRENT_VERSION"
+          echo "Latest version found: '$LATEST_VERSION'"
+          echo "Download URL found: '$DOWNLOAD_URL'"
+          echo "Current version in Cask: '$CURRENT_VERSION'"
           
-          if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "New version found!"
+          # Only proceed if we have a valid version, a valid URL, and it's actually a new version
+          if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ] && \
+             [ -n "$DOWNLOAD_URL" ] && [ "$DOWNLOAD_URL" != "null" ] && \
+             [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "Update is available and valid."
             echo "update_needed=true" >> $GITHUB_OUTPUT
             echo "new_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
             echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
           else
-            echo "No update needed or API error."
+            echo "No update needed or data missing from API."
             echo "update_needed=false" >> $GITHUB_OUTPUT
           fi
 
