@@ -8,7 +8,10 @@ You can install QLArchives via Homebrew with the following commands:
 
 ```bash
 brew tap relikd/qlarchives
-brew install --cask qlarchives --no-quarantine
+brew install --cask qlarchives
+
+# Since the app is not notarized, you may need to manually allow it:
+xattr -d com.apple.quarantine /Applications/QLArchives.app
 ```
 
 ## Updates
