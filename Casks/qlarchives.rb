@@ -12,6 +12,6 @@ cask "qlarchives" do
   app "QLArchives.app"
 
   zap trash: [
-    "~/Library/Containers/com.relikd.QLArchives",
+    "~/Library/Containers/de.relikd.QLArchives",
   ]
 end
