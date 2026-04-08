@@ -8,7 +8,7 @@ You can install QLArchives via Homebrew with the following commands:
 
 ```bash
 brew tap relikd/qlarchives
-brew install --cask qlarchives
+brew install --cask qlarchives --no-quarantine
 ```
 
 ## Updates
