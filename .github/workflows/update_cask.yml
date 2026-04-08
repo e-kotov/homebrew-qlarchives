@@ -1,0 +1,65 @@
+name: Auto-update Cask
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Every 6 hours
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-cask:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Tap
+        uses: actions/checkout@v4
+
+      - name: Check for new version
+        id: check
+        run: |
+          LATEST_JSON=$(curl -s https://api.github.com/repos/relikd/QLArchives/releases/latest)
+          LATEST_VERSION=$(echo "$LATEST_JSON" | grep -oE '"tag_name": "v?[0-9.]+"' | head -n 1 | sed -E 's/.*"v?([0-9.]+)"/\1/')
+          DOWNLOAD_URL=$(echo "$LATEST_JSON" | grep -oE '"browser_download_url": "[^"]+"' | head -n 1 | cut -d'"' -f4)
+          
+          CURRENT_VERSION=$(grep -E 'version "[0-9.]+"' Casks/qlarchives.rb | sed -E 's/.*"([0-9.]+)"/\1/')
+          
+          echo "Latest version: $LATEST_VERSION"
+          echo "Current version: $CURRENT_VERSION"
+          
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "New version found!"
+            echo "update_needed=true" >> $GITHUB_OUTPUT
+            echo "new_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+            echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+          else
+            echo "No update needed."
+            echo "update_needed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Cask
+        if: steps.check.outputs.update_needed == 'true'
+        run: |
+          VERSION=${{ steps.check.outputs.new_version }}
+          URL=${{ steps.check.outputs.download_url }}
+          
+          echo "Downloading $URL..."
+          curl -L -o release.zip "$URL"
+          SHA256=$(shasum -a 256 release.zip | awk '{print $1}')
+          
+          echo "New SHA256: $SHA256"
+          
+          # Update version and sha256 in the Ruby file
+          sed -i '' "s/version \".*\"/version \"$VERSION\"/" Casks/qlarchives.rb
+          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA256\"/" Casks/qlarchives.rb
+          
+          # Clean up
+          rm release.zip
+
+      - name: Commit and Push
+        if: steps.check.outputs.update_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/qlarchives.rb
+          git commit -m "Update QLArchives to v${{ steps.check.outputs.new_version }}"
+          git push
